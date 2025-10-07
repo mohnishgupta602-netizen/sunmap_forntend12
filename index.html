@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>sunMAP: Solar Energy Potential Analyzer</title>
+    <!-- React and ReactDOM via CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      :root {
+        --color-high: #16a34a; /* green */
+        --color-medium: #f59e0b; /* amber */
+        --color-low: #dc2626; /* red */
+        --bg: #ffffff;
+        --card: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text);} 
+      .container { max-width: 1320px; margin: 0 auto; padding: 24px; }
+      h1 { margin: 0 0 16px; font-size: 28px; }
+      h2 { margin: 24px 0 12px; font-size: 22px; }
+      hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+
+      /* 3-column layout */
+      .layout-3col { display: grid; grid-template-columns: 320px 1fr 380px; gap: 20px; align-items: start; }
+      @media (max-width: 1100px) { .layout-3col { grid-template-columns: 1fr; } }
+
+      /* Cards and grids */
+      .stat-card, .financial-card, .solar-meter-container { background: var(--card); padding: 16px; border-radius: 10px; border: 1px solid var(--border); }
+      .quick-stats-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+      .stat-label { color: var(--muted); margin: 0 0 6px; }
+      .stat-value { margin: 0; font-size: 20px; font-weight: 600; }
+      .financial-card-group { display: grid; grid-template-columns: 1fr; gap: 16px; }
+      .value-highlight, .value-original, .value-subsidy, .value-final { font-size: 18px; }
+      .value-subsidy { color: var(--color-high); }
+
+      /* Loading */
+      .loading-state { color: var(--muted); }
+
+      /* Location form */
+      .location-form { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; }
+      @media (max-width: 600px) { .location-form { grid-template-columns: 1fr; } }
+      .location-form input { padding: 10px 12px; background: #ffffff; border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+      .location-form button { padding: 10px 14px; background: #2563eb; border: 1px solid #1d4ed8; border-radius: 8px; color: white; font-weight: 600; cursor: pointer; }
+      .location-form button[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+      /* Solar meter */
+      .gauge-circle { position: relative; width: 100%; padding-top: 50%; background: radial-gradient(100% 100% at 50% 100%, #ffffff 50%, transparent 51%), conic-gradient(var(--color-low) 0 60deg, var(--color-medium) 60deg 120deg, var(--color-high) 120deg 180deg); border-bottom-left-radius: 999px; border-bottom-right-radius: 999px; overflow: hidden; border-top: 1px solid var(--border); }
+      .gauge-needle { position: absolute; bottom: 0; left: 50%; width: 2px; height: 48%; background: currentColor; transform-origin: bottom center; color: var(--color-high); }
+      .gauge-center-value { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); font-weight: 700; background: #ffffff; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
+      .potential-summary { margin: 12px 0 0; }
+
+      /* Map placeholder */
+      .map-panel { height: 560px; border: 1px solid var(--border); border-radius: 10px; background: #f8fafc; display: grid; place-items: center; color: #475569; }
+    </style>
+  </head>
+  <body>
+    <div id="root" class="container"></div>
+    <script type="text/babel" data-presets="env,react">
+      // This is the inlined React app to avoid file:// CORS issues
+      function LocationInput({ onSubmit, disabled }) {
+        const [location, setLocation] = React.useState('');
+        const [roofArea, setRoofArea] = React.useState('');
+
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          onSubmit({ location, roofArea });
+        };
+
+        return (
+          <form className="location-form" onSubmit={handleSubmit}>
+            <input
+              type="text"
+              placeholder="City or PIN"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              disabled={disabled}
+              required
+            />
+            <input
+              type="number"
+              placeholder="Roof area (m²)"
+              value={roofArea}
+              onChange={(e) => setRoofArea(e.target.value)}
+              min="0"
+              step="1"
+              disabled={disabled}
+            />
+            <button type="submit" disabled={disabled}>Calculate</button>
+          </form>
+        );
+      }
+
+      function getMeterColor(potentialScore) {
+        if (potentialScore >= 75) return 'var(--color-high)';
+        if (potentialScore >= 40) return 'var(--color-medium)';
+        return 'var(--color-low)';
+      }
+
+      function SolarMeter({ score, potentialText }) {
+        const color = getMeterColor(score);
+        const rotation = (score / 100) * 180 - 90;
+
+        return (
+          <div className="solar-meter-container">
+            <h3>Solar Potential Score</h3>
+            <div className="gauge-circle">
+              <div 
+                className="gauge-needle" 
+                style={{ 
+                  transform: `rotate(${rotation}deg)`,
+                  color: color
+                }}
+              ></div>
+              <div className="gauge-center-value" style={{ color: color }}>
+                {score} / 100
+              </div>
+            </div>
+            <p className="potential-summary" style={{ color: color }}>
+              {potentialText}
+            </p>
+          </div>
+        );
+      }
+
+      function QuickStats({ generation, panelSize }) {
+        return (
+          <div className="quick-stats-grid">
+            <div className="stat-card">
+              <p className="stat-label">Estimated Yearly Generation 💡</p>
+              <p className="stat-value">{generation}</p>
+            </div>
+            <div className="stat-card">
+              <p className="stat-label">Recommended System Size 📏</p>
+              <p className="stat-value">{panelSize}</p>
+            </div>
+          </div>
+        );
+      }
+
+      function FinancialBreakdown({ cost, subsidy, tariff, netCost }) {
+        return (
+          <div className="financial-card-group">
+            <div className="financial-card">
+              <h4>Electric Tariff</h4>
+              <p>Your current rate:</p>
+              <strong className="value-highlight">{tariff}</strong>
+            </div>
+            <div className="financial-card">
+              <h4>Estimated Panel Cost</h4>
+              <p>System Cost (before subsidy):</p>
+              <strong className="value-original">{cost}</strong>
+            </div>
+            <div className="financial-card subsidy-card">
+              <h4>Government Subsidy</h4>
+              <p>Applicable incentive amount:</p>
+              <strong className="value-subsidy">-{subsidy}</strong>
+            </div>
+            <div className="financial-card final-cost">
+              <h4>Net Installation Cost</h4>
+              <p>Your total out-of-pocket expense:</p>
+              <strong className="value-final">{netCost}</strong>
+            </div>
+          </div>
+        );
+      }
+
+      function App() {
+        const initialResults = {
+          score: 0,
+          text: 'Enter your details to calculate potential.',
+          generation: '0 kWh/yr',
+          panelSize: '0 kW',
+          estimatedCost: '₹ 0',
+          subsidy: '₹ 0',
+          tariff: '₹ 0.00/kWh'
+        };
+
+        const [results, setResults] = React.useState(initialResults);
+        const [loading, setLoading] = React.useState(false);
+
+        const calculatePotential = () => {
+          setLoading(true);
+          const simulatedPotential = Math.floor(Math.random() * (95 - 20 + 1) + 20);
+          const summary = simulatedPotential >= 75 ? 'Excellent Solar Potential! ☀️' :
+                          simulatedPotential >= 40 ? 'Good Potential. Worth exploring.' :
+                          'Low Potential. Requires a detailed survey.';
+
+          const panelKW = (simulatedPotential / 100) * 5;
+          const costBeforeSubsidy = panelKW * 75000;
+          const subsidyAmount = panelKW >= 3 ? 78000 : panelKW > 0 ? 30000 : 0;
+
+          setTimeout(() => {
+            setResults({
+              score: simulatedPotential,
+              text: summary,
+              generation: `${(panelKW * 1400).toFixed(0)} kWh/yr`,
+              panelSize: `${panelKW.toFixed(2)} kW`,
+              estimatedCost: `₹ ${(costBeforeSubsidy).toLocaleString('en-IN')}`,
+              subsidy: `₹ ${(subsidyAmount).toLocaleString('en-IN')}`,
+              tariff: '₹ 8.50/kWh (Residential Average)'
+            });
+            setLoading(false);
+          }, 800);
+        };
+
+        return (
+          <div className="sunmap-container">
+            <h1>sunMAP: Solar Energy Potential Analyzer ⚡</h1>
+
+            <LocationInput onSubmit={calculatePotential} disabled={loading} />
+
+            <hr />
+
+            {loading ? (
+              <p className="loading-state">Calculating your sun potential... </p>
+            ) : (
+              <div className="layout-3col">
+                <div>
+                  <SolarMeter score={results.score} potentialText={results.text} />
+                </div>
+
+                <div className="map-panel">
+                  <div>
+                    <div style={{textAlign:'center', fontWeight:700, marginBottom:'8px'}}>3D City Map Placeholder</div>
+                    <div style={{fontSize:'13px'}}>Embed your 3D map here (Cesium, Mapbox GL, etc.)</div>
+                  </div>
+                </div>
+
+                <div>
+                  <QuickStats generation={results.generation} panelSize={results.panelSize} />
+                  <h2>Financial Feasibility</h2>
+                  <FinancialBreakdown 
+                    cost={results.estimatedCost}
+                    subsidy={results.subsidy}
+                    tariff={results.tariff}
+                    netCost={`₹ ${(parseFloat(results.estimatedCost.replace(/[^0-9.]/g, '')) - parseFloat(results.subsidy.replace(/[^0-9.]/g, ''))).toLocaleString('en-IN')}`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
+  </body>
+  </html>
+
+
